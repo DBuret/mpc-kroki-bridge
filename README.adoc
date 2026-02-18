@@ -52,6 +52,29 @@ Add this to your `mcp.json` (usually in `~/.cache/lm-studio/mcp.json`):
 }
 ----
 
+=== Example - Simple PlantUML diagram
+
+ Create a UML sequence diagram showing the interaction between a user, a web server, and a database during login.
+
+
+The LLM will automatically:
+
+. Generate the PlantUML code
+. Call the `generate_diagram` tool with type `plantuml`
+. Return the generated SVG URL
+
+=== Example - Vega-Lite chart
+
+ Generate a bar chart comparing monthly sales: January 120, February 150, March 95, April 180
+
+
+The LLM will:
+
+. Build the Vega-Lite JSON spec
+. Call the tool with type `vegalite`
+. Return the SVG image
+
+Next step is to connect your LLM with database or the web so it can provide usefull data to kroki
 
 == Environment Variables
 
