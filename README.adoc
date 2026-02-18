@@ -1,0 +1,66 @@
+= MCP Kroki Bridge
+David Buret <https://github.com/DBuret[@DBuret]>
+:toc:
+:icons: font
+:docker-image: davidburet/mcp-kroki-bridge
+:sectnums:
+:toc:
+
+An ultra-lightweight (4MB) MCP gateway to render diagrams and data visualizations by calling link:https://kroki.io[Kroki].
+
+image:https://img.shields.io/docker/image-size/davidburet/mcp-kroki-bridge/latest[Size]
+image:https://img.shields.io/docker/v/davidburet/mcp-kroki-bridge[Version]
+
+== Features
+
+* **Multiple Engines**: Supports Mermaid, PlantUML, Vega-Lite, Graphviz, and more.
+* **Smart Compression**: Uses Zlib + Base64 encoding to fit complex diagrams into URLs.
+* **Hybrid Mode**: Compatible with both standard MCP (SSE) and LM Studio (HTTP/POST).
+* **Security**: Built from `scratch` with a non-root user. No OS vulnerabilities.
+
+== Tools Included
+
+=== `render_plantuml`
+Render professional UML diagrams (classes, sequences, states) and C4 models.
+
+=== `render_vega`
+The power of Data Visualization. Transform JSON data into beautiful charts (bars, lines, scatter plots) using Vega-Lite.
+
+== Quick Start (Docker)
+
+[source,bash]
+----
+docker run --rm -p 3001:3001 \
+  -e MCP_KROKI_PORT="3001" \
+  davidburet/mcp-kroki-bridge:latest
+----
+
+== Configuration for LM Studio
+
+Add this to your `mcp.json` (usually in `~/.cache/lm-studio/mcp.json`):
+
+[source,json]
+----
+{
+  "mcpServers": {
+    "mpc-kroki": {
+      "url": "http://192.168.1.49:3001/sse"    
+    }
+  }
+}
+----
+
+
+== Environment Variables
+
+|===
+| Variable | Description | Default
+
+| `MCP_KROKI_URL` | Base URL of the Kroki instance | `https://kroki.io`
+| `MCP_KROKI_PORT` | Listening port | `3001`
+| `RUST_LOG` | Logging level (info, debug, warn) | `info`
+|===
+
+== License
+
+MIT
