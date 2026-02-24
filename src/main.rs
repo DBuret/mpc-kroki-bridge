@@ -2,19 +2,22 @@ mod kroki;
 mod mcp;
 
 use axum::{
-    extract::State,
-    http::{StatusCode, HeaderMap},
-    response::{sse::{Event, KeepAlive, Sse}, IntoResponse},
-    routing::{get, post},
     Json, Router,
+    extract::State,
+    http::{HeaderMap, StatusCode},
+    response::{
+        IntoResponse,
+        sse::{Event, KeepAlive, Sse},
+    },
+    routing::{get, post},
 };
+use futures_util::stream::{self, Stream};
+use serde::{Deserialize, Serialize};
+use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
-use futures_util::stream::{self, Stream};
-use tracing::{info, warn, error, debug};
 use tower_http::trace::TraceLayer;
-use serde::{Deserialize, Serialize};
-use serde_json::{json, Value};
+use tracing::{debug, error, info, warn};
 
 // --- Structures MCP minimales pour le parsing interne ---
 #[derive(Deserialize)]
@@ -49,10 +52,11 @@ async fn main() {
         .init();
 
     let (tx, _) = broadcast::channel(100);
-    let kroki_url = std::env::var("MCP_KROKI_URL").unwrap_or_else(|_| "https://kroki.io".to_string());
+    let kroki_url =
+        std::env::var("MCP_KROKI_URL").unwrap_or_else(|_| "https://kroki.io".to_string());
     let port = std::env::var("MCP_KROKI_PORT").unwrap_or_else(|_| "3001".to_string());
 
-   let state = Arc::new(AppState { kroki_url, tx });
+    let state = Arc::new(AppState { kroki_url, tx });
 
     let app = Router::new()
         .route("/health", get(|| async { "OK" }))
@@ -70,7 +74,9 @@ async fn main() {
 }
 
 // Handler du tunnel SSE (GET /sse)
-async fn sse_handler(State(state): State<Arc<AppState>>) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
+async fn sse_handler(
+    State(state): State<Arc<AppState>>,
+) -> Sse<impl Stream<Item = Result<Event, std::convert::Infallible>>> {
     let rx = state.tx.subscribe();
     let stream = stream::unfold(rx, |mut rx| async move {
         match rx.recv().await {
@@ -92,28 +98,41 @@ async fn messages_handler(
 
     // --- STRATÉGIE HYBRIDE : Initialisation directe ---
     if method == "initialize" {
-        info!(method = "initialize", msg = "Handling via direct HTTP response");
+        info!(
+            method = "initialize",
+            msg = "Handling via direct HTTP response"
+        );
         let result = json!({
             "protocolVersion": "2024-11-05",
             "capabilities": { "tools": { "listChanged": false } },
             "serverInfo": { "name": "mcp-kroki-bridge", "version": "0.1.0" }
         });
-        let response = McpResponse { jsonrpc: "2.0".into(), id: request_id, result };
+        let response = McpResponse {
+            jsonrpc: "2.0".into(),
+            id: request_id,
+            result,
+        };
         return (StatusCode::OK, Json(response)).into_response();
     }
 
     // --- Traitement asynchrone pour les outils ---
     tokio::spawn(async move {
         // Ignorer les notifications sans ID
-        if request_id.is_null() && method != "notifications/initialized" { return; }
+        if request_id.is_null() && method != "notifications/initialized" {
+            return;
+        }
 
         let result = match method.as_str() {
             "tools/list" => {
                 debug!(method = "tools/list", msg = "Providing tool definitions");
                 mcp::get_tools_list()
-            },
+            }
             "tools/call" => {
-                let tool_name = payload.params.as_ref().and_then(|p| p.get("name")?.as_str()).unwrap_or("");
+                let tool_name = payload
+                    .params
+                    .as_ref()
+                    .and_then(|p| p.get("name")?.as_str())
+                    .unwrap_or("");
                 let args = payload.params.as_ref().and_then(|p| p.get("arguments"));
                 let source = args.and_then(|a| a.get("source")?.as_str()).unwrap_or("");
 
@@ -126,24 +145,56 @@ async fn messages_handler(
                     _ => "mermaid",
                 };
 
-                let url = kroki::generate_url(&state.kroki_url, kroki_type, source);
-                
-                json!({
-                    "content": [{
-                        "type": "text",
-                        "text": format!("Diagramme généré !\n\n![Diagram]({})\n\nLien direct : {}", url, url)
-                    }]
-                })
-            },
+                // Validation JSON pour render_vega
+                if kroki_type == "vegalite" {
+                    if let Err(e) = serde_json::from_str::<serde_json::Value>(source) {
+                        let msg = format!(
+                            "Invalid Vega-Lite JSON: {}. \
+                Common causes: arithmetic expressions in values (use literals only), \
+                misplaced properties outside their parent object, \
+                missing or extra braces. Please fix and retry.",
+                            e
+                        );
+                        warn!(tool = "render_vega", error = %e, msg = "Invalid JSON rejected");
+                        json!({
+                            "isError": true,
+                            "content": [{ "type": "text", "text": msg }]
+                        })
+                    } else {
+                        let url = kroki::generate_url(&state.kroki_url, kroki_type, source);
+                        json!({
+                            "content": [{
+                                "type": "text",
+                                "text": format!("Diagramme généré !\n\n![Diagram]({})\n\nLien direct : {}", url, url)
+                            }]
+                        })
+                    }
+                } else {
+                    let url = kroki::generate_url(&state.kroki_url, kroki_type, source);
+                    json!({
+                        "content": [{
+                            "type": "text",
+                            "text": format!("Diagramme généré !\n\n![Diagram]({})\n\nLien direct : {}", url, url)
+                        }]
+                    })
+                }
+            }
+
             "notifications/initialized" => {
                 info!(method = "notifications/initialized", status = "ready");
                 return;
-            },
-            _ => json!({ "isError": true, "content": [{ "type": "text", "text": format!("Method {} not supported", method) }] }),
+            }
+            _ => {
+                json!({ "isError": true, "content": [{ "type": "text", "text": format!("Method {} not supported", method) }] })
+            }
         };
 
         // Envoi de la réponse via le tunnel SSE
-        let response = McpResponse { jsonrpc: "2.0".into(), id: request_id, result };
+        let response = McpResponse {
+            jsonrpc: "2.0".into(),
+            id: request_id,
+            result,
+        };
         if let Ok(json_msg) = serde_json::to_string(&response) {
             let mut delivered = false;
             for _ in 0..3 {
