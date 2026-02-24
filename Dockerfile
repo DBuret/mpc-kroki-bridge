@@ -42,7 +42,7 @@ LABEL org.opencontainers.image.licenses="MIT"
 # Spécificités Runtime
 LABEL com.mcp.protocol_version="2024-11-05"
 LABEL com.mcp.transport="sse"
-LABEL com.mcp.tools="search,fetch_page"
+LABEL com.mcp.tools="render_plantuml,vega"
 
 
 # On récupère uniquement les certificats SSL depuis le builder
