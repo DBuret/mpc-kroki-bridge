@@ -33,7 +33,7 @@ LABEL org.opencontainers.image.source="https://github.com/DBuret/mcp-kroki-bridg
 LABEL org.opencontainers.image.documentation="https://github.com/DBuret/mcp-kroki-bridge/blob/main/README.adoc"
 
 # Versioning (à mettre à jour à chaque release)
-LABEL org.opencontainers.image.version="0.3.1"
+LABEL org.opencontainers.image.version="0.4.0"
 LABEL org.opencontainers.image.revision="7bae13f" 
 
 # Licensing

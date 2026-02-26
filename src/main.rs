@@ -4,7 +4,7 @@ mod mcp;
 use axum::{
     Json, Router,
     extract::State,
-    http::{HeaderMap, StatusCode},
+    http::{ StatusCode},
     response::{
         IntoResponse,
         sse::{Event, KeepAlive, Sse},
@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 use std::{sync::Arc, time::Duration};
 use tokio::sync::broadcast;
 use tower_http::trace::TraceLayer;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 // --- Structures MCP minimales pour le parsing interne ---
 #[derive(Deserialize)]
@@ -62,6 +62,7 @@ async fn main() {
         .route("/health", get(|| async { "OK" }))
         .route("/sse", get(sse_handler).post(messages_handler))
         .route("/messages", post(messages_handler))
+        .route("/mcp", post(mcp_handler))
         .layer(TraceLayer::new_for_http())
         .with_state(Arc::clone(&state)); // On clone ici (ou state.clone())
 
@@ -211,4 +212,105 @@ async fn messages_handler(
     });
 
     StatusCode::ACCEPTED.into_response()
+}
+
+async fn mcp_handler(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<McpRequest>,
+) -> impl IntoResponse {
+    let method = payload.method.clone();
+    let request_id = payload.id.clone().unwrap_or(serde_json::Value::Null);
+
+    info!("MCP request: method={}, id={}", method, request_id);
+
+    // 1. initialize : Sync response
+    if method == "initialize" {
+        let result = json!({
+            "protocolVersion": "2024-11-05",
+            "capabilities": {"tools": {}},
+            "listChanged": false,
+            "serverInfo": {
+                "name": "mcp-kroki-bridge",
+                "version": "0.2.0"
+            }
+        });
+        let response = McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request_id,
+            result, 
+        };
+        return Json(response).into_response();
+    }
+
+    // 2. tools/list : Sync definition
+    if method == "tools/list" {
+        let result = mcp::get_tools_list(); 
+        let response = McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request_id,
+            result,
+        };
+        return Json(response).into_response();
+    }
+
+    // 3. tools/call : Sync execution
+    if method == "tools/call" {
+        // FIXED: Use Option chaining instead of temporary borrows
+        let params = payload.params.as_ref();
+        let tool_name = params
+            .and_then(|p| p.get("name"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        let args = params.and_then(|p| p.get("arguments"));
+        let source = args
+            .and_then(|a| a.get("source"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        info!("tools/call: tool={}, source_len={}", tool_name, source.len());
+
+        let kroki_type = match tool_name {
+            "render_plantuml" => "plantuml",
+            "render_vega" => "vegalite",
+            "render_mermaid" => "mermaid",
+            _ => "mermaid",
+        };
+
+        // Vega-Lite validation
+        if kroki_type == "vegalite" {
+            if let Err(e) = serde_json::from_str::<serde_json::Value>(source) {
+                let msg = format!("Invalid Vega-Lite JSON: {}", e);
+                warn!("render_vega error: {}", e);
+                let result = json!({
+                    "isError": true,
+                    "content": [{"type": "text", "text": msg}]
+                });
+                return Json(McpResponse { jsonrpc: "2.0".into(), id: request_id, result }).into_response();
+            }
+        }
+
+        // Generate Kroki URL
+        let url = kroki::generate_url(&state.kroki_url, kroki_type, source);
+        let result = json!({
+            "content": [{
+                "type": "text",
+                "text": format!("Diagramme généré ! direct: {}", url)
+            }]
+        });
+
+        let response = McpResponse {
+            jsonrpc: "2.0".to_string(),
+            id: request_id,
+            result,
+        };
+        return Json(response).into_response();
+    }
+
+    // Default error for unsupported methods
+    let result = json!({
+        "isError": true,
+        "content": [{"type": "text", "text": format!("Method not supported: {}", method)}]
+    });
+    Json(McpResponse { jsonrpc: "2.0".into(), id: request_id, result }).into_response()
 }
